@@ -43,7 +43,7 @@ skvideo.setFFmpegPath('C:/ffmpeg/bin/') #set path to ffmpeg installation before 
 import skvideo.io
 
 #constants
-SAVE_FOLDER_ROOT = 'D:/video'
+SAVE_FOLDER_ROOT = 'c:/video'
 FILENAME_ROOT = 'mj_' # optional identifier
 EXPOSURE_TIME = 2001 #in microseconds
 WAIT_TIME = 0.0001 #in seconds - this limits polling time and should be less than the frame rate period
@@ -155,17 +155,27 @@ def camCapture(camQueue, cam, k): #function to capture images, convert to numpy,
 system = PySpin.System.GetInstance() # Get camera system
 cam_list = system.GetCameras() # Get camera list
 for i in range(cam_list.GetSize()): #hardcode serial numbers to ensure cameras enumerate in order
+    # Camera found: 23548032 Blackfly S BFS-U3-28S5C
+    # Camera found: 23548026 Blackfly S BFS-U3-28S5C
+    # Camera found: 23548033 Blackfly S BFS-U3-28S5C
     camCurrent = cam_list[i]
     print('Camera found: ' + camCurrent.TLDevice.DeviceSerialNumber.ToString()  + ' ' + camCurrent.TLDevice.DeviceModelName.ToString())
     camSN = camCurrent.TLDevice.DeviceSerialNumber.ToString()
     if camSN == "23548033":
-        camTop = camCurrent
+        cam_left = camCurrent
     elif camSN == "23548026":
-        camSide = camCurrent
+        cam_center = camCurrent
+    elif camSN == "23548032":
+        cam_right = camCurrent
+
 del camCurrent
 print('Cameras found and assigned')
-initCam(camTop)
-initCam(camSide)
+initCam(cam_left)
+initCam(cam_center)
+initCam(cam_right)
+
+
+
 print('Cameras initialized')
 # setup output video file parameters (first make sure latencies are OK with conservative parameters, then try to optimize):
 # for now just use default h264_nvenc options
@@ -193,38 +203,42 @@ try:
     print('Press Ctrl-C to exit early and save video')
     i = 0
     imageWriteQueue = queue.Queue() #queue to pass images captures to separate compress and save thread
-    camTopQueue = queue.Queue()  #queue to pass images from separate camTop acquisition thread
-    camSideQueue = queue.Queue()  #queue to pass images from separate camSide acquisition thread
+    camLeftQueue = queue.Queue()  #queue to pass images from separate camTop acquisition thread
+    camCenterQueue = queue.Queue()  #queue to pass images from separate camSide acquisition thread
+    camRightQueue = queue.Queue()  #queue to pass images from separate camRight acquisition thread
+
     # setup separate threads to accelerate image acquisition and saving, and start immediately:
     saveThread = threading.Thread(target=saveImage, args=(imageWriteQueue, writer,))
-    camTopThread = threading.Thread(target=camCapture, args=(camTopQueue, camTop, i,))
-    camSideThread = threading.Thread(target=camCapture, args=(camSideQueue, camSide, i,))
+    camLeftThread = threading.Thread(target=camCapture, args=(camLeftQueue, cam_left, i,))
+    camCenterThread = threading.Thread(target=camCapture, args=(camCenterQueue, cam_center, i,))
+    camRightThread = threading.Thread(target=camCapture, args=(camRightQueue, cam_right, i,))
     saveThread.start()
 
-    camTop.BeginAcquisition()
-    camSide.BeginAcquisition()
-    camTopThread.start()
-    camSideThread.start()
+    cam_left.BeginAcquisition()
+    cam_center.BeginAcquisition()
+    cam_right.BeginAcquisition()
+    camLeftThread.start()
+    camCenterThread.start()
+    camRightThread.start()
 
     for i in range(FRAMES_TO_RECORD): # main acquisition loop
-        camsNotReady = (camTopQueue.empty() or camSideQueue.empty()) # wait for all images ready from parallel threads
+        camsNotReady = (camLeftQueue.empty() or camCenterQueue.empty() or camRightQueue.empty()) # wait for all images ready from parallel threads
         while camsNotReady: #wait until ready in a loop
             time.sleep(WAIT_TIME)
-            camsNotReady = (camTopQueue.empty() or camSideQueue.empty()) # wait for all images ready
+            camsNotReady = (camLeftQueue.empty() or camCenterQueue.empty() or camRightQueue.empty()) # wait for all images ready
 
         if i == 0:
             tStart = time.time()
             print('Capture begins')
-        dequeuedAcq1 = camTopQueue.get() # get images formated as numpy from separate process queues as soon as they are both ready
-        dequeuedAcq2 = camSideQueue.get()
+        dequeuedAcq1 = camLeftQueue.get() # get images formated as numpy from separate process queues as soon as they are both ready
+        dequeuedAcq2 = camCenterQueue.get()
+        dequeuedAcq3 = camRightQueue.get()
 
         # now send concatenated image to FFMPEG saving queue
-        enqueuedImageCombined = np.concatenate((dequeuedAcq1, dequeuedAcq2), axis=1)
+        enqueuedImageCombined = np.concatenate((dequeuedAcq1, dequeuedAcq2, dequeuedAcq3), axis=1)
         imageWriteQueue.put(enqueuedImageCombined) #put next combined image in saving queue
 
         if (i+1)%5 == 0: #update screen every X frames
-#            timeElapsed = str(time.time() - tStart)
-#            timeElapsedStr = "elapsed time: " + timeElapsed[0:5] + " sec"
             framesElapsedStr = "frame #: " + str(i+1) + " of " + str(FRAMES_TO_RECORD)
             textlbl.configure(text=framesElapsedStr)
             I = ImageTk.PhotoImage(Image.fromarray(enqueuedImageCombined))
@@ -236,13 +250,19 @@ try:
             print('Complete ' + str(i+1) + ' frames captured')
             tEndAcq = time.time()
 
-# end aqcuisition loop #############################################################################################
+# end acquisition loop #############################################################################################
+
+
+
+# if any key pressed, end gracefully
 except KeyboardInterrupt: #if user hits Ctrl-C, everything should end gracefully
     tEndAcq = time.time()
     pass
 
-camTop.EndAcquisition()
-camSide.EndAcquisition()
+cam_left.EndAcquisition()
+cam_center.EndAcquisition()
+cam_right.EndAcquisition()
+
 textlbl.configure(text='Capture complete, still writing to disk...')
 window.update()
 print('Capture ends at: {:.2f}sec'.format(tEndAcq - tStart))
@@ -254,10 +274,12 @@ writer.close() #close to FFMPEG writer
 window.destroy()
 
 # delete all pointers/variable/etc:
-camTop.DeInit()
-camSide.DeInit()
-del camTop
-del camSide
+cam_left.DeInit()
+cam_center.DeInit()
+cam_right.DeInit()
+del cam_left
+del cam_center
+del cam_right
 cam_list.Clear()
 del cam_list
 system.ReleaseInstance()
