@@ -1,28 +1,28 @@
 # Jason Keller
 # Feb 2021
 # =============================================================================
-#  Program to set BlackFly S camera settings and acquire frames from 2 synchronized cameras and 
-#  write them to a compressed video file. Based on FLIR Spinnaker API example code. I have 
+#  Program to set BlackFly S camera settings and acquire frames from 2 synchronized cameras and
+#  write them to a compressed video file. Based on FLIR Spinnaker API example code. I have
 #  also tested with a Flea3 camera, which works but requires modifying the camera
-#  settings section to use non "Quickspin" functions (see FLIR examples). 
-# 
+#  settings section to use non "Quickspin" functions (see FLIR examples).
+#
 #  The intent is that this program started first, then will wait for triggers
 #  on Line 0 (OPTO_IN) from the DAQ system. It is assumed that the DAQ system will provide
 #  a specified number of triggers, and that the Line 0 black wires of both cameras are
 #  soldered together and driven simultaneously. Both cameras output their "exposure active"
-#  signal on Line 1 (OPTO_OUT, the white wire, which is pulled up to 3.3V via a 1.8kOhm resistor 
+#  signal on Line 1 (OPTO_OUT, the white wire, which is pulled up to 3.3V via a 1.8kOhm resistor
 #  for each camera) so that each frame can be synchronized (DAQ should sample this at ~1kHz+).
 #
-#  Tkinter is used to provide a simple GUI to display the images, and skvideo 
+#  Tkinter is used to provide a simple GUI to display the images, and skvideo
 #  is used as a wrapper to ffmpeg to write H.264 compressed video quickly, using
 #  mostly default parameters (although I tried pix_fmt gray to reduce size further,
 #  but default worked better)
 #
-#  To setup, you must download an FFMPEG executable and set an environment 
+#  To setup, you must download an FFMPEG executable and set an environment
 #  variable path to it (as well as setFFmpegPath function below). Other nonstandard
-#  dependencies are the FLIR Spinnaker camera driver and PySpin package (see 
-#  Spinnaker downloads), and the skvideo package. 
-#  
+#  dependencies are the FLIR Spinnaker camera driver and PySpin package (see
+#  Spinnaker downloads), and the skvideo package.
+#
 #  NOTE: currently there is no check to see if readout can keep up with triggering
 #  other that a timeout warning. It is up to the user to determine if the correct number
 #  of frames are captured. Also, the "ffmpegThreads" parameter can throttle CPU usage
@@ -44,14 +44,14 @@ import tkinter as tk
 from PIL import Image, ImageTk
 import numpy as np
 import skvideo
-skvideo.setFFmpegPath('C:/Anaconda3/Lib/site-packages/ffmpeg') #set path to ffmpeg installation before importing io
+skvideo.setFFmpegPath('C:/ffmpeg/bin/') #set path to ffmpeg installation before importing io
 import skvideo.io
 
 #constants
-SAVE_FOLDER_ROOT = 'C:/video'
+SAVE_FOLDER_ROOT = 'D:/video'
 FILENAME_ROOT = 'mj_' # optional identifier
 EXPOSURE_TIME = 500 #in microseconds
-WAIT_TIME = 0.0001 #in seconds - this limits polling time and should be less than the frame rate period 
+WAIT_TIME = 0.0001 #in seconds - this limits polling time and should be less than the frame rate period
 GAIN_VALUE = 0 #in dB, 0-40;
 GAMMA_VALUE = 0.4 #0.25-1
 IMAGE_HEIGHT = 400  #540 pixels default; this should be divisible by 16 for H264 compressed encoding
@@ -59,13 +59,13 @@ IMAGE_WIDTH = 400 #720 pixels default; this should be divisible by 16 for H264 c
 HEIGHT_OFFSET = 72 #round((540-IMAGE_HEIGHT)/2) # Y, to keep in middle of sensor; must be divisible by 4
 WIDTH_OFFSET = 160# round((720-IMAGE_WIDTH)/2) # X, to keep in middle of sensor; must be divisible by 4
 FRAMES_PER_SECOND = 250 #this is determined by triggers sent from behavior controller
-FRAMES_TO_RECORD = 600*FRAMES_PER_SECOND #frame rate * num seconds to record; this should match # expected exposure triggers from DAQ counter output
+FRAMES_TO_RECORD = 30*FRAMES_PER_SECOND #frame rate * num seconds to record; this should match # expected exposure triggers from DAQ counter output
 CAM_TIMEOUT = 1000 #in ms; time to wait for another image before aborting
 #FRAME_RATE_OUT = 250
 
 # generate output video directory and filename and make sure not overwriting
 now = datetime.now()
-mouseStr = input("Enter mouse ID: ") 
+mouseStr = input("Enter mouse ID: ")
 #groupStr = 'test_'
 folderStr = '2021_02_test'
 dateStr = now.strftime("_%Y_%m_%d") #save folder ex: 2020_01_01
@@ -88,13 +88,13 @@ def initCam(cam): #function to initialize camera parameters for synchronized cap
     # load default configuration
     cam.UserSetSelector.SetValue(PySpin.UserSetSelector_Default)
     cam.UserSetLoad()
-    # set acquisition. Continues acquisition. Auto exposure off. Set frame rate using exposure time. 
+    # set acquisition. Continues acquisition. Auto exposure off. Set frame rate using exposure time.
     cam.AcquisitionMode.SetValue(PySpin.AcquisitionMode_Continuous)
     cam.ExposureAuto.SetValue(PySpin.ExposureAuto_Off)
     cam.ExposureMode.SetValue(PySpin.ExposureMode_Timed) #Timed or TriggerWidth (must comment out trigger parameters other that Line)
     cam.ExposureTime.SetValue(EXPOSURE_TIME)
     cam.AcquisitionFrameRateEnable.SetValue(False)
-    # set analog. Set Gain + Gamma. 
+    # set analog. Set Gain + Gamma.
     cam.GainAuto.SetValue(PySpin.GainAuto_Off)
     cam.Gain.SetValue(GAIN_VALUE)
     cam.GammaEnable.SetValue(True)
@@ -112,6 +112,7 @@ def initCam(cam): #function to initialize camera parameters for synchronized cap
     handling_mode_entry = handling_mode1.GetEntryByName('OldestFirst')
     handling_mode1.SetIntValue(handling_mode_entry.GetValue())
     # set trigger input to Line0 (the black wire)
+    ''' 
     cam.TriggerMode.SetValue(PySpin.TriggerMode_On)
     cam.TriggerOverlap.SetValue(PySpin.TriggerOverlap_ReadOut) #Off or ReadOut to speed up
     cam.TriggerSource.SetValue(PySpin.TriggerSource_Line0)
@@ -119,11 +120,12 @@ def initCam(cam): #function to initialize camera parameters for synchronized cap
     cam.TriggerSelector.SetValue(PySpin.TriggerSelector_FrameStart) # require trigger for each frame
     # optionally send exposure active signal on Line 2 (the white wire)
     cam.LineSelector.SetValue(PySpin.LineSelector_Line1)
-    cam.LineMode.SetValue(PySpin.LineMode_Output) 
+    cam.LineMode.SetValue(PySpin.LineMode_Output)
     cam.LineSource.SetValue(PySpin.LineSource_ExposureActive) #route desired output to Line 1 (try Counter0Active or ExposureActive)
+    '''
     #cam.LineSelector.SetValue(PySpin.LineSelector_Line2)
-    #cam.V3_3Enable.SetValue(True) #enable 3.3V rail on Line 2 (red wire) to act as a pull up for ExposureActive - this does not seem to be necessary as long as a pull up resistor is installed between the physical lines, and actually degrades signal quality 
-    
+    #cam.V3_3Enable.SetValue(True) #enable 3.3V rail on Line 2 (red wire) to act as a pull up for ExposureActive - this does not seem to be necessary as long as a pull up resistor is installed between the physical lines, and actually degrades signal quality
+
 def saveImage(imageWriteQueue, writer): #function to save video frames from the queue in a separate process
     while True:
         dequeuedImage = imageWriteQueue.get()
@@ -132,11 +134,11 @@ def saveImage(imageWriteQueue, writer): #function to save video frames from the 
         else:
             writer.writeFrame(dequeuedImage) #call to ffmpeg
             imageWriteQueue.task_done()
-                      
+
 def camCapture(camQueue, cam, k): #function to capture images, convert to numpy, send to queue, and release from buffer in separate process
     while True:
         if k == 0: #wait infinitely for trigger for first image
-            image = cam.GetNextImage() #get pointer to next image in camera buffer; blocks until image arrives via USB, within infinite timeout for first frame while waiting for DAQ to start sending triggers    
+            image = cam.GetNextImage() #get pointer to next image in camera buffer; blocks until image arrives via USB, within infinite timeout for first frame while waiting for DAQ to start sending triggers
         elif (k) == (FRAMES_TO_RECORD):
             print('cam done ')
             break #stop loop and function when expected # frames found
@@ -147,9 +149,9 @@ def camCapture(camQueue, cam, k): #function to capture images, convert to numpy,
                 print('WARNING: timeout waiting for trigger! Aborting...press Ctrl-C to stop')
                 print(str(k) + ' frames captured')
                 break
-                    
+
         npImage = np.array(image.GetData(), dtype="uint8").reshape( (image.GetHeight(), image.GetWidth()) ); #convert PySpin ImagePtr into numpy array; use uint8 for Mono8 images, uint16 for Mono16
-        camQueue.put(npImage)  
+        camQueue.put(npImage)
         image.Release() #release from camera buffer
         k = k + 1
 
@@ -158,12 +160,12 @@ system = PySpin.System.GetInstance() # Get camera system
 cam_list = system.GetCameras() # Get camera list
 cam1 = cam_list[0]
 cam2 = cam_list[1]
-initCam(cam1) 
-initCam(cam2) 
- 
-# setup output video file parameters (can try H265 in future for better compression):  
+initCam(cam1)
+initCam(cam2)
+
+# setup output video file parameters (can try H265 in future for better compression):
 # for some reason FFMPEG takes exponentially longer to write at nonstandard frame rates, so just use default 25fps and change elsewhere if needed
-crfOut = 21 #controls tradeoff between quality and storage, see https://trac.ffmpeg.org/wiki/Encode/H.264 
+crfOut = 21 #controls tradeoff between quality and storage, see https://trac.ffmpeg.org/wiki/Encode/H.264
 ffmpegThreads = 4 #this controls tradeoff between CPU usage and memory usage; video writes can take a long time if this value is low
 #crfOut = 18 #this should look nearly lossless
 #writer = skvideo.io.FFmpegWriter(movieName, outputdict={'-r': str(FRAME_RATE_OUT), '-vcodec': 'libx264', '-crf': str(crfOut)}) # with frame rate
@@ -184,7 +186,7 @@ window.update() #update TCL tasks to make window appear
 
 #############################################################################
 # start main program loop ###################################################
-#############################################################################    
+#############################################################################
 
 try:
     print('Press Ctrl-C to exit early and save video')
@@ -196,30 +198,30 @@ try:
     saveThread = threading.Thread(target=saveImage, args=(imageWriteQueue, writer,))
     cam1Thread = threading.Thread(target=camCapture, args=(cam1Queue, cam1, i,))
     cam2Thread = threading.Thread(target=camCapture, args=(cam2Queue, cam2, i,))
-    saveThread.start()  
-    
+    saveThread.start()
+
     cam1.BeginAcquisition()
     cam2.BeginAcquisition()
     cam1Thread.start()
-    cam2Thread.start()   
+    cam2Thread.start()
 
     for i in range(FRAMES_TO_RECORD): # main acquisition loop
         camsNotReady = (cam1Queue.empty() or cam2Queue.empty()) # wait for both images ready from parallel threads
         while camsNotReady: #wait until ready in a loop
             time.sleep(WAIT_TIME)
             camsNotReady = (cam1Queue.empty() or cam2Queue.empty()) # wait for both images ready
-           
+
         if i == 0:
             tStart = time.time()
             print('Capture begins')
         dequeuedAcq1 = cam1Queue.get() # get images formated as numpy from separate process queues as soon as they are both ready
         dequeuedAcq2 = cam2Queue.get()
-        
+
         # now send concatenated image to FFMPEG saving queue
         enqueuedImageCombined = np.concatenate((dequeuedAcq1, dequeuedAcq2), axis=1)
         imageWriteQueue.put(enqueuedImageCombined) #put next combined image in saving queue
-        
-        if (i+1)%20 == 0: #update screen every X frames 
+
+        if (i+1)%20 == 0: #update screen every X frames
 #            timeElapsed = str(time.time() - tStart)
 #            timeElapsedStr = "elapsed time: " + timeElapsed[0:5] + " sec"
             framesElapsedStr = "frame #: " + str(i+1) + " of " + str(FRAMES_TO_RECORD)
@@ -233,14 +235,14 @@ try:
             print('Complete ' + str(i+1) + ' frames captured')
             tEndAcq = time.time()
 
-# end aqcuisition loop #############################################################################################            
+# end aqcuisition loop #############################################################################################
 except KeyboardInterrupt: #if user hits Ctrl-C, everything should end gracefully
     tEndAcq = time.time()
-    pass        
-        
-cam1.EndAcquisition() 
+    pass
+
+cam1.EndAcquisition()
 cam2.EndAcquisition()
-textlbl.configure(text='Capture complete, still writing to disk...') 
+textlbl.configure(text='Capture complete, still writing to disk...')
 window.update()
 print('Capture ends at: {:.2f}sec'.format(tEndAcq - tStart))
 #   print('calculated frame rate: {:.2f}FPS'.format(numImages/(t2 - t1)))
@@ -248,8 +250,8 @@ imageWriteQueue.join() #wait until compression and saving queue is done writing 
 tEndWrite = time.time()
 print('File written at: {:.2f}sec'.format(tEndWrite - tStart))
 writer.close() #close to FFMPEG writer
-window.destroy() 
-    
+window.destroy()
+
 # delete all pointers/variable/etc:
 cam1.DeInit()
 cam2.DeInit()
